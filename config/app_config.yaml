@@ -1,0 +1,35 @@
+app:
+  name: "BodyVision"
+  version: "2.0.0"
+  debug: true
+  
+models:
+  depth_model:
+    path: "app/models/weights/best_depth_Ours_Bilinear_inc_3_net_G.pth"
+    device: "cuda"
+  detection_model:
+    path: "app/models/weights/detection_model.pth"
+    device: "cuda"
+
+camera:
+  focal_length_mm: 3.519
+  sensor_width_mm: 4.61
+  sensor_height_mm: 3.46
+
+measurement:
+  gradient_filter: "scharr"
+  smoothing: false
+  max_distance_threshold: 0.01
+
+body_fat:
+  default_height: 1.82
+  supported_methods: ["navy"]
+
+# Model-specific configurations
+detection:
+  model_path: "app/models/weights/csv_retinanet_25.pt"
+  classes_path: "config/classes.csv"
+  
+depth:
+  model_path: "app/models/weights/best_depth_Ours_Bilinear_inc_3_net_G.pth"
+  checkpoints_dir: "app/models/weights"
