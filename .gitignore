@@ -56,3 +56,17 @@ logs/
 # Gradio temporary files
 gradio_cached_examples/
 flagged/
+
+# Cleanup: Prevent future clutter
+*.backup
+*_backup_*
+test_*.py
+temp_*
+.temp/
+
+# Cleanup: Prevent future clutter
+*.backup
+*_backup_*
+test_*.py
+temp_*
+.temp/

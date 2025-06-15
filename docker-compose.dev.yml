@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  bodyvision-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.fastapi
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot reload
+      - ./app:/app/app
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./assets:/app/assets
+    environment:
+      - DEBUG=true
+      - BODYVISION_DEV_MODE=true
+      - PYTHONPATH=/app
+    command: ["python", "start_dev.py"]
+    restart: unless-stopped
