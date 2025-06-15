@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/BodyScan.iml" filepath="$PROJECT_DIR$/.idea/BodyScan.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/BodyVision.iml" filepath="$PROJECT_DIR$/.idea/BodyVision.iml" />
     </modules>
   </component>
 </project>
