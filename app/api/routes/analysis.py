@@ -1,7 +1,6 @@
 """Body analysis endpoints."""
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
-from fastapi.responses import JSONResponse
 from PIL import Image
 import io
 import time
@@ -11,8 +10,7 @@ from typing import Optional
 
 from app.core.body_analyzer import BodyAnalyzer
 from app.models.schemas import (
-    AnalysisRequest, AnalysisResponse, ErrorResponse, 
-    MeasurementResult, BodyCompositionResult, DetectionResult, BoundingBox,
+    AnalysisRequest, AnalysisResponse, MeasurementResult, BodyCompositionResult, DetectionResult, BoundingBox,
     HealthCategoriesResponse
 )
 from app.utils.logger import get_logger

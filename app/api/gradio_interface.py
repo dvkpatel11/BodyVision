@@ -1,166 +1,302 @@
-"""Enhanced Gradio interface for BodyVision with visualization options."""
+"""Production-ready Gradio interface for BodyVision."""
 
 import gradio as gr
 import asyncio
-import numpy as np
+import time
+import json
 from PIL import Image
 from typing import Tuple, Optional
-import cv2
+import numpy as np
 
-from app.core.body_analyzer import BodyAnalyzer
 from app.services import create_analysis_service
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class GradioInterface:
-    """Enhanced Gradio web interface for BodyVision."""
+class ProductionGradioInterface:
+    """Production-grade Gradio interface for BodyVision."""
     
     def __init__(self):
-        self.analyzer = BodyAnalyzer()
-        self.analysis_service = create_analysis_service()
-        logger.info("Enhanced GradioInterface initialized")
+        """Initialize production Gradio interface."""
+        try:
+            self.analysis_service = create_analysis_service()
+            logger.info("✅ Production Gradio interface initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Gradio interface: {e}")
+            raise
     
-    def analyze_image(
+    def analyze_image_sync(
         self, 
-        image: Image.Image,
+        image: Optional[Image.Image],
         height: float,
         weight: float,
         age: int,
-        sex: str,
-        show_detections: bool = True,
-        show_depth: bool = True
-    ) -> Tuple[str, str, Optional[Image.Image], Optional[Image.Image]]:
+        sex: str
+    ) -> Tuple[str, str, str]:
         """
-        Process image and return analysis results with visualizations.
+        Synchronous wrapper for async body analysis.
         
         Returns:
-            Tuple of (formatted_summary, json_results, detection_viz, depth_viz)
+            Tuple of (summary, detailed_json, insights)
         """
+        start_time = time.time()
+        
         try:
-            logger.info("Processing new image analysis request with visualizations")
+            # Validate inputs
+            if image is None:
+                return "❌ Please upload an image", "{}", "Upload a clear photo showing your neck and waist areas."
             
-            # Run async analysis in sync context
+            if not (100 <= height <= 250):
+                return "❌ Height must be between 100-250 cm", "{}", "Please enter a valid height."
+            
+            logger.info("🎨 Processing image via Gradio interface")
+            
+            # Prepare user metadata
+            user_metadata = {
+                'height': height,
+                'sex': sex.lower(),
+            }
+            
+            if weight > 0:
+                user_metadata['weight'] = weight
+            if age > 0:
+                user_metadata['age'] = age
+            
+            # Run analysis in event loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
-            results = loop.run_until_complete(
-                self.analyzer.analyze(
-                    image=image,
-                    height=height,
-                    weight=weight if weight > 0 else None,
-                    age=age if age > 0 else None,
-                    sex=sex.lower()
+            try:
+                results = loop.run_until_complete(
+                    self.analysis_service.analyze_body(image, user_metadata)
                 )
-            )
+            finally:
+                loop.close()
             
-            # Generate visualizations if requested
-            detection_viz = None
-            depth_viz = None
+            # Format results for Gradio display
+            summary = self._format_summary(results)
+            detailed_json = json.dumps(results, indent=2, default=str)
+            insights = self._format_insights(results)
             
-            if show_detections and 'detections' in results:
-                try:
-                    detection_array = self.analysis_service.detection_service.visualize_detections(
-                        image, results['detections']
-                    )
-                    detection_viz = Image.fromarray(cv2.cvtColor(detection_array, cv2.COLOR_BGR2RGB))
-                except Exception as e:
-                    logger.warning(f"Failed to generate detection visualization: {str(e)}")
+            total_time = time.time() - start_time
+            logger.info(f"✅ Gradio analysis completed in {total_time:.3f}s")
             
-            if show_depth:
-                try:
-                    # Get depth map
-                    depth_map = loop.run_until_complete(
-                        self.analysis_service.depth_service.estimate_depth(image)
-                    )
-                    depth_colored = self.analysis_service.depth_service.visualize_depth(depth_map)
-                    depth_viz = Image.fromarray(cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB))
-                except Exception as e:
-                    logger.warning(f"Failed to generate depth visualization: {str(e)}")
-            
-            loop.close()
-            
-            # Format results for display
-            summary = self.analyzer.format_results(results)
-            
-            # Convert results to JSON string for detailed view
-            import json
-            json_results = json.dumps(results, indent=2, default=str)
-            
-            logger.info("Analysis completed successfully with visualizations")
-            return summary, json_results, detection_viz, depth_viz
+            return summary, detailed_json, insights
             
         except Exception as e:
-            error_msg = f"Analysis failed: {str(e)}"
-            logger.error(error_msg)
-            return error_msg, f'{{"error": "{str(e)}"}}', None, None
+            error_time = time.time() - start_time
+            error_msg = f"❌ Analysis failed: {str(e)}"
+            logger.error(f"Gradio analysis failed in {error_time:.3f}s: {e}")
+            
+            return error_msg, f'{{"error": "{str(e)}"}}', "Please try again with a clearer image."
+    
+    def _format_summary(self, results: dict) -> str:
+        """Format analysis results for summary display."""
+        
+        if not results.get('success', False):
+            return f"❌ Analysis failed: {results.get('error', 'Unknown error')}"
+        
+        # Extract key metrics
+        body_fat = results.get('body_fat_percentage')
+        category = results.get('body_fat_category', 'Unknown')
+        neck_cm = results.get('neck_cm', 0)
+        waist_cm = results.get('waist_cm', 0)
+        confidence = results.get('confidence_score', 0)
+        processing_time = results.get('processing_time_seconds', 0)
+        
+        # Build summary
+        lines = []
+        lines.append("🎯 BodyVision Analysis Results")
+        lines.append("=" * 35)
+        
+        if body_fat is not None:
+            lines.append(f"📊 Body Fat Percentage: {body_fat}%")
+            lines.append(f"🏷️  Health Category: {category}")
+            lines.append("")
+            lines.append("📏 Measurements:")
+            lines.append(f"   • Neck: {neck_cm:.1f} cm")
+            lines.append(f"   • Waist: {waist_cm:.1f} cm")
+        else:
+            lines.append("⚠️  Could not calculate body fat percentage")
+            lines.append("   Please try with a clearer image")
+        
+        lines.append("")
+        lines.append("🔍 Analysis Quality:")
+        lines.append(f"   • Confidence: {confidence:.1%}")
+        lines.append(f"   • Processing Time: {processing_time:.2f}s")
+        
+        return "\n".join(lines)
+    
+    def _format_insights(self, results: dict) -> str:
+        """Format health insights for display."""
+        
+        if not results.get('success', False):
+            return "Upload a clear photo with good lighting for personalized health insights."
+        
+        body_fat = results.get('body_fat_percentage')
+        category = results.get('body_fat_category', 'Unknown')
+        sex = results.get('user_context', {}).get('sex', 'male')
+        
+        if body_fat is None:
+            return (
+                "💡 Tips for Better Results:\n"
+                "• Ensure neck and waist are clearly visible\n"
+                "• Use good lighting (natural light preferred)\n"
+                "• Stand 1-2 meters from camera\n"
+                "• Wear fitted clothing\n"
+                "• Keep camera at chest level"
+            )
+        
+        # Generate insights based on category
+        insights_map = {
+            'Essential Fat': {
+                'summary': f"Your {body_fat}% body fat is in the essential fat range for {sex}s.",
+                'advice': "This is very low body fat. Consider consulting a healthcare provider about maintaining healthy weight and nutrition.",
+                'action': "Focus on balanced nutrition and appropriate exercise for your health goals."
+            },
+            'Athletes': {
+                'summary': f"Excellent! Your {body_fat}% body fat is in the athletic range.",
+                'advice': "You're in outstanding physical condition with low body fat and good muscle definition.",
+                'action': "Maintain your training routine and ensure adequate recovery between workouts."
+            },
+            'Fitness': {
+                'summary': f"Great work! Your {body_fat}% body fat is in the fitness range.",
+                'advice': "You're in good shape with healthy body composition and visible muscle definition.",
+                'action': "Continue your current routine. Consider adding variety to prevent plateaus."
+            },
+            'Average': {
+                'summary': f"Your {body_fat}% body fat is in the average healthy range for {sex}s.",
+                'advice': "You're within normal ranges. There's room for improvement if you have fitness goals.",
+                'action': "Consider strength training 2-3x per week and balanced nutrition for better composition."
+            },
+            'Obese': {
+                'summary': f"Your {body_fat}% body fat indicates opportunity for health improvement.",
+                'advice': "Higher body fat levels may increase health risks. Consider lifestyle changes.",
+                'action': "Consult healthcare and nutrition professionals for a personalized improvement plan."
+            }
+        }
+        
+        insight = insights_map.get(category, {
+            'summary': f"Body fat analysis: {body_fat}%",
+            'advice': "Continue monitoring your health with regular measurements.",
+            'action': "Maintain balanced nutrition and regular exercise."
+        })
+        
+        return (
+            f"💡 Health Insights:\n\n"
+            f"📋 Summary: {insight['summary']}\n\n"
+            f"🎯 Guidance: {insight['advice']}\n\n"
+            f"🚀 Next Steps: {insight['action']}\n\n"
+            f"📈 Remember: Body composition is just one health metric. "
+            f"Regular exercise, balanced nutrition, and overall wellness are key!"
+        )
     
     def create_interface(self) -> gr.Interface:
-        """Create and configure the enhanced Gradio interface."""
+        """Create the production Gradio interface."""
         
-        with gr.Blocks(title="BodyVision - AI Body Analysis", theme="soft") as interface:
-            gr.Markdown("""
-            # 🏃‍♂️ BodyVision - AI Body Analysis
-            
-            Upload a photo to get instant body composition analysis using AI.
-            
-            **📋 Instructions:**
-            - Stand at least 1 meter from camera
-            - Ensure neck and waist are clearly visible  
-            - Good lighting and minimal background preferred
-            - Wear fitted clothing for better accuracy
-            """)
-            
-            with gr.Row():
-                with gr.Column(scale=1):
-                    # Input controls
-                    image_input = gr.Image(type="pil", label="📸 Upload your photo")
-                    height_input = gr.Number(label="📏 Height (cm)", value=175, minimum=100, maximum=250)
-                    weight_input = gr.Number(label="⚖️ Weight (kg)", value=70, minimum=0, maximum=300)
-                    age_input = gr.Number(label="🎂 Age (years)", value=30, minimum=0, maximum=120)
-                    sex_input = gr.Radio(["Male", "Female"], label="👤 Gender", value="Male")
-                    
-                    # Visualization options
-                    gr.Markdown("### 🎨 Visualization Options")
-                    show_detections = gr.Checkbox(label="Show body part detections", value=True)
-                    show_depth = gr.Checkbox(label="Show depth map", value=True)
-                    
-                    # Analyze button
-                    analyze_btn = gr.Button("🔍 Analyze", variant="primary", size="lg")
-                
-                with gr.Column(scale=2):
-                    # Output displays
-                    with gr.Row():
-                        summary_output = gr.Textbox(label="📊 Analysis Summary", lines=6)
-                        json_output = gr.Code(label="🔍 Detailed Results (JSON)", language="json")
-                    
-                    with gr.Row():
-                        detection_output = gr.Image(label="🎯 Body Part Detections", type="pil")
-                        depth_output = gr.Image(label="🌊 Depth Map", type="pil")
-            
-            # Connect the analyze button
-            analyze_btn.click(
-                fn=self.analyze_image,
-                inputs=[
-                    image_input, height_input, weight_input, age_input, sex_input,
-                    show_detections, show_depth
-                ],
-                outputs=[summary_output, json_output, detection_output, depth_output]
-            )
-            
-            # Example section
-            gr.Markdown("### 📚 Example")
-            if os.path.exists("assets/samples/204.jpg"):
-                gr.Examples(
-                    examples=[["assets/samples/204.jpg", 175, 75, 28, "Male", True, True]],
-                    inputs=[image_input, height_input, weight_input, age_input, sex_input, show_detections, show_depth]
+        # Custom CSS for better appearance
+        custom_css = """
+        .gradio-container {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .gr-button-primary {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            border: none;
+        }
+        .gr-form {
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+        }
+        """
+        
+        interface = gr.Interface(
+            fn=self.analyze_image_sync,
+            inputs=[
+                gr.Image(
+                    type="pil",
+                    label="📸 Upload Your Photo",
+                    info="Stand 1-2 meters from camera, ensure neck and waist are visible"
+                ),
+                gr.Number(
+                    label="📏 Height (cm)",
+                    value=175,
+                    minimum=100,
+                    maximum=250,
+                    info="Your height in centimeters"
+                ),
+                gr.Number(
+                    label="⚖️ Weight (kg) - Optional",
+                    value=0,
+                    minimum=0,
+                    maximum=300,
+                    info="Leave as 0 if you prefer not to share"
+                ),
+                gr.Number(
+                    label="🎂 Age (years) - Optional",
+                    value=0,
+                    minimum=0,
+                    maximum=120,
+                    info="Leave as 0 if you prefer not to share"
+                ),
+                gr.Radio(
+                    ["Male", "Female"],
+                    label="👤 Gender",
+                    value="Male",
+                    info="Required for accurate body fat calculation"
                 )
+            ],
+            outputs=[
+                gr.Textbox(
+                    label="📊 Analysis Summary",
+                    lines=12,
+                    max_lines=15,
+                    info="Your body composition analysis results"
+                ),
+                gr.Code(
+                    label="🔍 Detailed Results (JSON)",
+                    language="json",
+                    info="Complete analysis data for developers"
+                ),
+                gr.Textbox(
+                    label="💡 Personalized Health Insights",
+                    lines=10,
+                    max_lines=12,
+                    info="Health guidance based on your results"
+                )
+            ],
+            title="🏃‍♂️ BodyVision - AI Body Composition Analysis",
+            description="""
+            **Get instant body fat percentage analysis from just a photo!**
+            
+            BodyVision uses advanced AI (MediaPipe + Navy body fat formula) to analyze your body composition.
+            Simply upload a clear photo and get accurate results in seconds.
+            
+            📋 **Instructions:**
+            • Stand 1-2 meters from the camera
+            • Ensure your neck and waist areas are clearly visible  
+            • Use good lighting (natural light works best)
+            • Wear fitted clothing for better accuracy
+            • Keep the camera at chest level
+            """,
+            examples=[
+                ["assets/samples/204.jpg", 175, 70, 25, "Male"] if os.path.exists("assets/samples/204.jpg") else None
+            ],
+            theme=gr.themes.Soft(),
+            css=custom_css,
+            allow_flagging="never",
+            analytics_enabled=False
+        )
         
         return interface
 
 
 def create_app():
-    """Create and return the enhanced Gradio app."""
-    interface = GradioInterface()
-    return interface.create_interface()
+    """Factory function to create Gradio app."""
+    try:
+        interface = ProductionGradioInterface()
+        return interface.create_interface()
+    except Exception as e:
+        logger.error(f"Failed to create Gradio app: {e}")
+        raise

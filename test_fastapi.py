@@ -1,7 +1,6 @@
 """Test script for FastAPI endpoints."""
 
 import requests
-import json
 import os
 from PIL import Image
 import io

@@ -3,7 +3,7 @@
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Optional, Literal
+from typing import Literal
 
 
 def calculate_gradient(

@@ -2,7 +2,6 @@
 
 import uvicorn
 import os
-from app.core.config import get_settings
 
 # Force development mode
 os.environ['DEBUG'] = 'true'

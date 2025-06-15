@@ -2,7 +2,6 @@
 
 import uvicorn
 import os
-from app.core.config import get_settings
 
 # Force production mode
 os.environ['DEBUG'] = 'false'

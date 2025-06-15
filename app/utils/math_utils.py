@@ -1,7 +1,6 @@
 """Mathematical utilities for body measurement calculations."""
 
 import numpy as np
-from typing import Tuple
 
 
 def point_cloud(depth: np.ndarray) -> np.ndarray:
