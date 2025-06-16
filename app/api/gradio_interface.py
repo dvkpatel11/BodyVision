@@ -1,4 +1,4 @@
-"""Production-ready Gradio interface for BodyVision with remote FastAPI backend."""
+"""Production-ready Gradio interface for BodyVision with 3-photo support."""
 
 import gradio as gr
 import requests
@@ -17,7 +17,7 @@ settings = get_settings()
 
 
 class ProductionGradioInterface:
-    """Production-grade Gradio interface for BodyVision using remote FastAPI backend."""
+    """Production-grade Gradio interface for BodyVision 3-photo analysis."""
 
     def __init__(self, api_base_url: Optional[str] = None):
         """Initialize production Gradio interface with remote backend."""
@@ -35,7 +35,7 @@ class ProductionGradioInterface:
     def _test_backend_connection(self):
         """Test if FastAPI backend is accessible."""
         try:
-            response = requests.get(f"{self.api_base_url}/health", timeout=5)
+            response = requests.get(f"{self.api_base_url}/api/v1/health/", timeout=5)
             if response.status_code != 200:
                 raise ConnectionError(f"Backend returned status {response.status_code}")
         except requests.exceptions.RequestException as e:
@@ -43,16 +43,18 @@ class ProductionGradioInterface:
                 f"Cannot connect to FastAPI backend at {self.api_base_url}: {e}"
             )
 
-    def analyze_image_sync(
+    def analyze_three_photos_sync(
         self,
-        image: Optional[Image.Image],
+        front_image: Optional[Image.Image],
+        side_image: Optional[Image.Image],
+        back_image: Optional[Image.Image],
         height: float,
         weight: float,
         age: int,
         sex: str,
     ) -> Tuple[str, str, str]:
         """
-        Analyze image using remote FastAPI backend.
+        Analyze 3 images using remote FastAPI backend.
 
         Returns:
             Tuple of (summary, detailed_json, insights)
@@ -60,12 +62,20 @@ class ProductionGradioInterface:
         start_time = time.time()
 
         try:
-            # Validate inputs
-            if image is None:
+            # Validate all 3 images are provided
+            if not all([front_image, side_image, back_image]):
+                missing = []
+                if not front_image:
+                    missing.append("Front view")
+                if not side_image:
+                    missing.append("Side view")
+                if not back_image:
+                    missing.append("Back view")
+
                 return (
-                    "❌ Please upload an image",
+                    f"❌ Missing required photos: {', '.join(missing)}",
                     "{}",
-                    "Upload a clear photo showing your neck and waist areas.",
+                    "Please upload all 3 required photos:\n• Front view (facing camera)\n• Side view (90° profile)\n• Back view (rear view)",
                 )
 
             if not (100 <= height <= 250):
@@ -75,15 +85,21 @@ class ProductionGradioInterface:
                     "Please enter a valid height.",
                 )
 
-            logger.info("🎨 Processing image via remote FastAPI backend")
+            logger.info("🎨 Processing 3 photos via remote FastAPI backend")
 
-            # Convert PIL image to bytes for upload
-            img_byte_arr = io.BytesIO()
-            image.save(img_byte_arr, format="JPEG", quality=90)
-            img_byte_arr.seek(0)
+            # Prepare all 3 images for upload
+            files = {}
+            for name, image in [
+                ("front_image", front_image),
+                ("side_image", side_image),
+                ("back_image", back_image),
+            ]:
+                img_byte_arr = io.BytesIO()
+                image.save(img_byte_arr, format="JPEG", quality=90)
+                img_byte_arr.seek(0)
+                files[name] = (f"{name}.jpg", img_byte_arr, "image/jpeg")
 
             # Prepare request data
-            files = {"image": ("image.jpg", img_byte_arr, "image/jpeg")}
             data = {
                 "height": height,
                 "sex": sex.lower(),
@@ -95,24 +111,24 @@ class ProductionGradioInterface:
             if age > 0:
                 data["age"] = age
 
-            # Call FastAPI backend
+            # Call FastAPI backend with 3 photos
             response = requests.post(
                 f"{self.api_base_url}/api/v1/analysis/analyze",
                 files=files,
                 data=data,
-                timeout=30,
+                timeout=60,  # Longer timeout for 3-photo processing
             )
 
             if response.status_code == 200:
                 results = response.json()
 
                 # Format results for Gradio display
-                summary = self._format_summary(results)
+                summary = self._format_three_photo_summary(results)
                 detailed_json = json.dumps(results, indent=2, default=str)
-                insights = self._format_insights(results)
+                insights = self._format_three_photo_insights(results)
 
                 total_time = time.time() - start_time
-                logger.info(f"✅ Remote analysis completed in {total_time:.3f}s")
+                logger.info(f"✅ 3-photo analysis completed in {total_time:.3f}s")
 
                 return summary, detailed_json, insights
             else:
@@ -127,12 +143,12 @@ class ProductionGradioInterface:
                 )
 
         except requests.exceptions.Timeout:
-            error_msg = "❌ Request timed out - backend may be overloaded"
+            error_msg = "❌ Request timed out - 3-photo analysis takes longer"
             logger.error(error_msg)
             return (
                 error_msg,
                 f'{{"error": "timeout"}}',
-                "The analysis is taking longer than expected. Please try again.",
+                "3-photo analysis is taking longer than expected. Please try again.",
             )
 
         except requests.exceptions.ConnectionError:
@@ -146,87 +162,113 @@ class ProductionGradioInterface:
 
         except Exception as e:
             error_time = time.time() - start_time
-            error_msg = f"❌ Analysis failed: {str(e)}"
-            logger.error(f"Remote analysis failed in {error_time:.3f}s: {e}")
+            error_msg = f"❌ 3-photo analysis failed: {str(e)}"
+            logger.error(f"3-photo analysis failed in {error_time:.3f}s: {e}")
 
             return (
                 error_msg,
                 f'{{"error": "{str(e)}"}}',
-                "Please try again with a clearer image.",
+                "Please try again with clear, well-lit photos.",
             )
 
-    def _format_summary(self, results: dict) -> str:
-        """Format analysis results for summary display."""
+    def _format_three_photo_summary(self, results: dict) -> str:
+        """Format 3-photo analysis results for summary display."""
 
         if not results.get("success", False):
             return f"❌ Analysis failed: {results.get('error', 'Unknown error')}"
 
-        # Handle both direct results and nested body_composition structure
-        body_comp = results.get("body_composition", {}) or results
+        # Extract metrics from results
+        body_fat = results.get("body_fat_percentage")
+        category = results.get("body_fat_category", "Unknown")
+        lean_mass = results.get("lean_muscle_mass_kg")
+        bmi = results.get("bmi")
+        bmi_category = results.get("bmi_category")
+        whr = results.get("waist_to_hip_ratio")
+        neck_cm = results.get("neck_cm", 0)
+        waist_cm = results.get("waist_cm", 0)
+        chest_cm = results.get("chest_cm", 0)
+        hip_cm = results.get("hip_cm", 0)
+        shoulder_width = results.get("shoulder_width_cm", 0)
+        body_surface_area = results.get("body_surface_area_m2", 0)
 
-        # Extract key metrics
-        body_fat = body_comp.get("body_fat_percentage")
-        category = body_comp.get("body_fat_category", "Unknown")
-        neck_cm = body_comp.get("neck_cm", 0)
-        waist_cm = body_comp.get("waist_cm", 0)
-        confidence = body_comp.get("confidence_score", 0)
+        # Quality metrics
+        confidence = results.get("confidence_score", 0)
         processing_time = results.get("processing_time_seconds", 0)
         analysis_id = results.get("analysis_id", "N/A")
+        photos_processed = results.get("photos_processed", 3)
 
-        # Build summary
+        # Build comprehensive summary
         lines = []
-        lines.append("🎯 BodyVision Analysis Results")
-        lines.append("=" * 35)
+        lines.append("🎯 BodyVision 3-Photo Analysis Results")
+        lines.append("=" * 45)
 
         if body_fat is not None:
-            lines.append(f"📊 Body Fat Percentage: {body_fat}%")
+            lines.append(f"🔥 Body Fat Percentage: {body_fat}%")
             lines.append(f"🏷️  Health Category: {category}")
             lines.append("")
-            lines.append("📏 Measurements:")
+
+            # Enhanced metrics
+            if lean_mass:
+                lines.append(f"💪 Lean Muscle Mass: {lean_mass} kg")
+            if bmi:
+                lines.append(f"📊 BMI: {bmi} ({bmi_category})")
+            if whr:
+                lines.append(f"❤️  Waist-to-Hip Ratio: {whr:.3f}")
+            if body_surface_area:
+                lines.append(f"🧬 Body Surface Area: {body_surface_area:.2f} m²")
+
+            lines.append("")
+            lines.append("📏 Detailed Measurements:")
             lines.append(f"   • Neck: {neck_cm:.1f} cm")
             lines.append(f"   • Waist: {waist_cm:.1f} cm")
+            if chest_cm:
+                lines.append(f"   • Chest: {chest_cm:.1f} cm")
+            if hip_cm:
+                lines.append(f"   • Hip: {hip_cm:.1f} cm")
+            if shoulder_width:
+                lines.append(f"   • Shoulder Width: {shoulder_width:.1f} cm")
         else:
             lines.append("⚠️  Could not calculate body fat percentage")
-            lines.append("   Please try with a clearer image")
+            lines.append("   Please ensure all 3 photos are clear and well-lit")
 
         lines.append("")
         lines.append("🔍 Analysis Quality:")
-        lines.append(f"   • Confidence: {confidence:.1%}")
+        lines.append(f"   • Overall Confidence: {confidence:.1%}")
+        lines.append(f"   • Photos Processed: {photos_processed}/3")
         lines.append(f"   • Processing Time: {processing_time:.2f}s")
         lines.append(f"   • Analysis ID: {analysis_id}")
-        lines.append("   • Backend: Remote FastAPI")
+        lines.append("   • Mode: 3-Photo Comprehensive")
 
         return "\n".join(lines)
 
-    def _format_insights(self, results: dict) -> str:
-        """Format health insights for display."""
+    def _format_three_photo_insights(self, results: dict) -> str:
+        """Format health insights for 3-photo analysis."""
 
         if not results.get("success", False):
-            return "Upload a clear photo with good lighting for personalized health insights."
+            return "Upload 3 clear, well-lit photos for comprehensive health insights."
 
-        # Handle both direct results and nested body_composition structure
-        body_comp = results.get("body_composition", {}) or results
-        body_fat = body_comp.get("body_fat_percentage")
-        category = body_comp.get("body_fat_category", "Unknown")
+        body_fat = results.get("body_fat_percentage")
+        category = results.get("body_fat_category", "Unknown")
+        cv_risk = results.get("cardiovascular_risk", "Unknown")
+        sleep_risk = results.get("sleep_apnea_risk", "Unknown")
 
-        # Get user context from either location
-        user_context = results.get("user_context", {}) or body_comp.get(
-            "user_context", {}
-        )
+        # Get user context
+        user_context = results.get("user_context", {})
         sex = user_context.get("sex", "male")
 
         if body_fat is None:
             return (
-                "💡 Tips for Better Results:\n"
-                "• Ensure neck and waist are clearly visible\n"
-                "• Use good lighting (natural light preferred)\n"
-                "• Stand 1-2 meters from camera\n"
+                "💡 Tips for Better 3-Photo Results:\n"
+                "• Ensure all 3 views are clearly visible\n"
+                "• Use consistent, good lighting for all photos\n"
+                "• Stand 1.5-2 meters from camera\n"
                 "• Wear fitted clothing\n"
                 "• Keep camera at chest level\n"
+                "• Take photos in this order: Front → Side → Back\n"
                 "• Check that backend service is running"
             )
 
-        # Generate insights based on category
+        # Generate comprehensive insights
         insights_map = {
             "Essential Fat": {
                 "summary": f"Your {body_fat}% body fat is in the essential fat range for {sex}s.",
@@ -235,7 +277,7 @@ class ProductionGradioInterface:
             },
             "Athletes": {
                 "summary": f"Excellent! Your {body_fat}% body fat is in the athletic range.",
-                "advice": "You're in outstanding physical condition with low body fat and good muscle definition.",
+                "advice": "You're in outstanding physical condition with low body fat and excellent muscle definition.",
                 "action": "Maintain your training routine and ensure adequate recovery between workouts.",
             },
             "Fitness": {
@@ -264,18 +306,30 @@ class ProductionGradioInterface:
             },
         )
 
-        return (
-            f"💡 Health Insights:\n\n"
+        insight_text = (
+            f"💡 Comprehensive Health Insights:\n\n"
             f"📋 Summary: {insight['summary']}\n\n"
             f"🎯 Guidance: {insight['advice']}\n\n"
             f"🚀 Next Steps: {insight['action']}\n\n"
-            f"📈 Remember: Body composition is just one health metric. "
-            f"Regular exercise, balanced nutrition, and overall wellness are key!\n\n"
-            f"🌐 Analysis powered by remote FastAPI backend with MediaPipe detection."
         )
 
+        # Add risk assessments
+        if cv_risk != "Unknown":
+            insight_text += f"❤️  Cardiovascular Risk: {cv_risk}\n"
+        if sleep_risk != "Unknown":
+            insight_text += f"😴 Sleep Apnea Risk: {sleep_risk}\n"
+
+        insight_text += (
+            f"\n📈 3-Photo Advantage: This comprehensive analysis provides "
+            f"enhanced accuracy through multi-angle assessment including posture, "
+            f"symmetry, and complete body composition.\n\n"
+            f"🌐 Analysis powered by MediaPipe 3-photo detection with FastAPI backend."
+        )
+
+        return insight_text
+
     def create_interface(self) -> gr.Interface:
-        """Create the production Gradio interface."""
+        """Create the production Gradio interface for 3-photo analysis."""
 
         # Custom CSS for better appearance
         custom_css = """
@@ -291,15 +345,30 @@ class ProductionGradioInterface:
             border-radius: 10px;
             padding: 20px;
         }
+        .photo-upload {
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 10px;
+        }
         """
 
         interface = gr.Interface(
-            fn=self.analyze_image_sync,
+            fn=self.analyze_three_photos_sync,
             inputs=[
                 gr.Image(
                     type="pil",
-                    label="📸 Upload Your Photo",
-                    info="Stand 1-2 meters from camera, ensure neck and waist are visible",
+                    label="📸 Front View Photo (Required)",
+                    elem_classes=["photo-upload"],
+                ),
+                gr.Image(
+                    type="pil",
+                    label="📸 Side View Photo (Required)",
+                    elem_classes=["photo-upload"],
+                ),
+                gr.Image(
+                    type="pil",
+                    label="📸 Back View Photo (Required)",
+                    elem_classes=["photo-upload"],
                 ),
                 gr.Number(
                     label="📏 Height (cm)",
@@ -331,42 +400,47 @@ class ProductionGradioInterface:
             ],
             outputs=[
                 gr.Textbox(
-                    label="📊 Analysis Summary",
-                    lines=12,
-                    max_lines=15,
-                    info="Your body composition analysis results",
+                    label="📊 Comprehensive Analysis Summary",
+                    lines=20,
+                    max_lines=25,
+                    info="Your complete 9-metric body composition analysis",
                 ),
                 gr.Code(
                     label="🔍 Detailed Results (JSON)",
                     language="json",
-                    info="Complete analysis data for developers",
+                    # info="Complete analysis data including all metrics",
                 ),
                 gr.Textbox(
                     label="💡 Personalized Health Insights",
-                    lines=10,
-                    max_lines=12,
-                    info="Health guidance based on your results",
+                    lines=15,
+                    max_lines=20,
+                    info="Health guidance and risk assessment based on 3-photo analysis",
                 ),
             ],
-            title="🏃‍♂️ BodyVision - AI Body Composition Analysis",
+            title="🏃‍♂️ BodyVision - 3-Photo AI Body Analysis",
             description=f"""
-            **Get instant body fat percentage analysis from just a photo!**
+            **Comprehensive body composition analysis from 3 photos!**
             
-            BodyVision uses advanced AI (MediaPipe + Navy body fat formula) to analyze your body composition.
-            Simply upload a clear photo and get accurate results in seconds.
+            BodyVision analyzes your complete body composition using 3 photos for maximum accuracy and delivers 9 key health metrics.
             
-            📋 **Instructions:**
-            • Stand 1-2 meters from the camera
-            • Ensure your neck and waist areas are clearly visible  
-            • Use good lighting (natural light works best)
-            • Wear fitted clothing for better accuracy
-            • Keep the camera at chest level
+            📋 **Required Photos (All 3 Needed):**
+            1. **Front View**: Face the camera directly, arms slightly away from sides
+            2. **Side View**: Turn 90° to your right, arms relaxed at sides  
+            3. **Back View**: Turn around completely, arms slightly away from sides
+            
+            📊 **You'll Get 9 Health Metrics:**
+            • Body Fat Percentage • Lean Muscle Mass • BMI Analysis
+            • Waist-to-Hip Ratio • Neck Circumference • Chest-to-Waist Ratio
+            • Shoulder Width & Symmetry • Body Surface Area • Risk Assessment
+            
+            🎯 **Photo Guidelines:**
+            • Stand 4-6 feet from camera • Use good, even lighting
+            • Wear fitted athletic clothing • Plain background preferred
+            • Keep camera at chest level • Take all photos in same session
             
             🌐 **Backend:** Remote FastAPI service at {self.api_base_url}
             """,
-            examples=[
-                # Remove file path examples since they won't exist in remote setup
-            ],
+            examples=[],
             theme=gr.themes.Soft(),
             css=custom_css,
             allow_flagging="never",
@@ -377,10 +451,10 @@ class ProductionGradioInterface:
 
 
 def create_app(api_url: Optional[str] = None):
-    """Factory function to create Gradio app with remote backend."""
+    """Factory function to create Gradio app with 3-photo remote backend."""
     try:
         interface = ProductionGradioInterface(api_url)
         return interface.create_interface()
     except Exception as e:
-        logger.error(f"Failed to create Gradio app: {e}")
+        logger.error(f"Failed to create 3-photo Gradio app: {e}")
         raise
