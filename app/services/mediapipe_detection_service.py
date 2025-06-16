@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import mediapipe as mp
 from PIL import Image
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 import time
 
 from app.utils.logger import get_logger
